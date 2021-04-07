@@ -47,14 +47,14 @@ class Args:
     lr_schedule : str = 'fixed'
     eval_steps : int = 1000
     gpus : int = -1
-    distributed_backend : str = 'ddp'
+    distributed_backend : str = None
     amp_level : str = '01'
     fp16 : bool = False
     precision : int = 32
     resume_from_checkpoint : bool = False
-#     num_sanity_val_steps=0
-#     limit_train_batches=2
-#     limit_val_batches=2
+    # num_sanity_val_steps=0
+    # limit_train_batches=2
+    # limit_val_batches=2
     kl_coeff : float = 0.1
 
     # log

@@ -117,3 +117,4 @@ checkpoints/
 data/
 logs/
 .vscode/
+.idea/
