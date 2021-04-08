@@ -210,11 +210,14 @@ def get_callbacks(args: Args):
             )
         )
     elif args.save_steps:
+        from model_checkpoint import ModelCheckpoint
         callbacks.append(
-            SaveCallback(
-                args.save_path,
-                args.save_steps,
-                args.save_top_k
+            ModelCheckpoint(
+                monitor='train_loss',
+                dirpath=args.save_path,
+                filename="{epoch}-{step}-{train_loss:.2f}",
+                save_top_k=args.save_top_k,
+                every_n_train_steps=args.save_steps
             )
         )
     return callbacks
