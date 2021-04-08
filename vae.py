@@ -34,7 +34,7 @@ class Vae(pl.LightningModule):
         
         self.hidden2vocab=nn.Linear(self.hparams.hidden_size, self.hparams.vocab_size)
         if self.hparams.tie_weights:
-            self.hidden2vocab.weight=self.embedding.weight
+            self.hidden2vocab.weight=self.word_embedding.weight
         
         self._init_weights()
 
@@ -57,19 +57,23 @@ class Vae(pl.LightningModule):
 
         if input:
             mean, log_var, embedding = self.encoder_forward(input)
-        p, q, z = self.sample(mean, log_var)
+            p, q, z = self.sample(mean, log_var)
+        else:
+            z=torch.randn(1, self.hparams.latent_dim).to(self.device)
         hidden=self.latent2hidden(z)
 
         assert not (( decode is not None ) and reuse_embedding)
 
         if reuse_embedding and embedding:
             logits = self.decoder_forward(hidden, embedding=embedding)
+            return torch.argmax(logits, dim=-1)
         elif decode == 'greedy':
             generation = self._greedy_decoding(hidden)
+            return generation
 
 
     def decoder_forward(self, hidden, input=None, embedding=None):
-        assert input or embedding
+        assert input is not None or embedding is not None
 
         if embedding:
 
@@ -83,7 +87,7 @@ class Vae(pl.LightningModule):
 
             return logits
 
-        elif input:
+        elif input is not None:
 
             embedding = self._embedding(input)
             embedding = embedding.permute(1, 0, 2)
@@ -102,7 +106,10 @@ class Vae(pl.LightningModule):
 
         prompt_start=torch.LongTensor(batch_size).fill_(CLS_IDX).to(self.device)
         input_sequence=prompt_start.unsqueeze(1)
-        batch_running=torch.arange(batch_size)
+        batch_running=torch.arange(batch_size).to(self.device)
+        sequence_length=torch.zeros(batch_size, dtype=torch.long).to(self.device)
+
+        generation=torch.zeros(batch_size, self.hparams.max_sent_len).to(self.device)
         t=0
         while t < self.hparams.max_sent_len:
 
@@ -110,11 +117,22 @@ class Vae(pl.LightningModule):
             logits = logits[:, -1, :]
             score, sample = torch.topk(logits, 1, dim=-1)
 
-            sample.unsqueeze_(-1).unsqueeze_(-1)
+            input_sequence=torch.cat([input_sequence, sample], dim=-1)
+            sample=sample.squeeze_(-1)
+            is_end=torch.logical_or(sample==PAD_IDX, sample==SEP_IDX)
+            sequence_length[batch_running] = torch.where(is_end, torch.LongTensor(batch_running.shape[0]).fill_(t+1).to(self.device), sequence_length[batch_running])
 
-            generation = self._decoding(logits)
+            if torch.any(is_end):
+                batch_running=batch_running[~is_end]
+                input_sequence=input_sequence[batch_running]
+                generation[batch_running] = torch.where(is_end, input_sequence, generation[batch_running])
 
+                if not batch_running.shape[0]:
+                    break
 
+            t+=1
+            
+        return generation
 
 
     def _decoding(self, logits, mode='greedy'):
@@ -220,12 +238,21 @@ class PositionalEncoding(nn.Module):
 
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0).transpose(0, 1)
+        dimention=torch.arange(0, d_model)
+
+        pe[:, 0::2] = torch.sin(position / torch.pow(10000, 2*(dimention//2)[::2]/d_model))
+        pe[:, 1::2] = torch.cos(position / torch.pow(10000, 2*(dimention//2)[1::2]/d_model))
+        pe = pe.unsqueeze(0)
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        x = x + self.pe[:x.size(0), :]
+        x = x + self.pe[:, :x.size(1), :]
         return self.dropout(x)
+
+
+if __name__=="__main__":
+    from utils import Args
+    args=Args('train_data_path', 'save_path')
+    args.vocab_size=200
+    model=Vae(args)
+    model.generate(decode='greedy')
